@@ -45,10 +45,8 @@ REM ----------------------------------------------------------------------------
 REM ---------------------- CONEXIÓN A LA BASE DE DATOS CON EL NUEVO USUARIO ----------------------------
 
 CONNECT &user_hotel/&password@localhost:1521/xepdb1
-ALTER SESSION SET NLS_LANGUAGE = 'AMERICAN';
-ALTER SESSION SET NLS_TERRITORY = 'AMERICA';
-ALTER SESSION SET NLS_CHARACTERSET = 'AL32UTF8'
-
+ALTER SESSION SET NLS_LANGUAGE=American;
+ALTER SESSION SET NLS_TERRITORY=America;
 
 REM ----------------------------------------------------------------------------------------------------
 
@@ -56,7 +54,7 @@ REM ---------------------------------------- CREACIÓN DE TABLAS ---------------
 
 CREATE TABLE huespedes (
     id_huesped NUMBER(10) CONSTRAINT id_hues_nn NOT NULL,
-    nombre VARCHAR2(30),
+    nombre NVARCHAR2(30),
     email VARCHAR2(30),
     telefono VARCHAR2(20)
 );
@@ -71,7 +69,7 @@ CREATE TABLE opiniones (
     id_opinion NUMBER(10) CONSTRAINT id_op_nn NOT NULL,
     id_huesped NUMBER(10),
     comentario VARCHAR2(500),
-    puntuacion NUMBER(3),
+    puntuacion NUMBER(2),
     fecha DATE
 );
 
@@ -139,7 +137,8 @@ CREATE TABLE promociones (
 );
 
 ALTER TABLE promociones ADD (
-    CONSTRAINT id_prom_pk PRIMARY KEY (id_promocion)
+    CONSTRAINT id_prom_pk PRIMARY KEY (id_promocion),
+    CONSTRAINT check_fechas CHECK (fecha_inicio <= fecha_fin)
 );
 
 CREATE TABLE reservas_promociones (
@@ -153,7 +152,151 @@ ALTER TABLE reservas_promociones ADD (
     CONSTRAINT id_prom_res_fk FOREIGN KEY (id_promocion) REFERENCES promociones (id_promocion)
 );
 
-REM --------------------------------------- POBLAR TABLAS ----------------------------------------
+REM ----------------------------------------------------------------------------------------------------
+
+REM ------------------------------------- CREACIÓN DE DISPARADORES -------------------------------------
+
+CREATE OR REPLACE TRIGGER trg_reservas
+AFTER INSERT OR UPDATE OR DELETE ON reservas FOR EACH ROW
+BEGIN
+    IF UPDATING THEN
+        DELETE FROM reservas_promociones
+        WHERE id_reserva = :OLD.id_reserva;
+    END IF;
+
+    INSERT INTO reservas_promociones (id_reserva, id_promocion)
+    SELECT :NEW.id_reserva, p.id_promocion
+    FROM promociones p
+    WHERE ((SELECT COUNT(*) FROM reservas_promociones WHERE id_reserva = :NEW.id_reserva) < 3) AND (:NEW.fecha_entrada BETWEEN p.fecha_inicio AND p.fecha_fin);
+
+    IF DELETING THEN
+        DELETE FROM reservas_promociones
+        WHERE id_reserva = :OLD.id_reserva;
+    END IF;
+END;
+/
+
+CREATE OR REPLACE TRIGGER trg_promociones
+AFTER INSERT OR UPDATE OR DELETE ON promociones FOR EACH ROW
+BEGIN
+    IF UPDATING THEN
+        DELETE FROM reservas_promociones
+        WHERE id_promocion = :OLD.id_promocion;
+    END IF;
+
+    INSERT INTO reservas_promociones (id_reserva, id_promocion)
+    SELECT r.id_reserva, :NEW.id_promocion
+    FROM reservas r
+    WHERE ((SELECT COUNT(*) FROM reservas_promociones WHERE id_reserva = r.id_reserva) < 3) AND (r.fecha_entrada BETWEEN :NEW.fecha_inicio AND :NEW.fecha_fin);
+
+    IF DELETING THEN
+        DELETE FROM reservas_promociones
+        WHERE id_promocion = :OLD.id_promocion;
+    END IF;
+END;
+/
+
+REM ----------------------------------------------------------------------------------------------------
+
+
+REM -------------------------------------- COMENTARIOS AL ESQUEMA --------------------------------------
+
+COMMENT ON TABLE huespedes
+IS 'Tabla que almacena la información de los huéspedes';
+COMMENT ON COLUMN huespedes.id_huesped
+IS 'Identificador único del huésped';
+COMMENT ON COLUMN huespedes.nombre
+IS 'Nombre del huésped';
+COMMENT ON COLUMN huespedes.email
+IS 'Correo electrónico del huésped, debe contener un "@" y ser único';
+COMMENT ON COLUMN huespedes.telefono
+IS 'Número de teléfono del huésped';
+
+COMMENT ON TABLE opiniones
+IS 'Tabla que almacena las opiniones de los huéspedes sobre su estancia';
+COMMENT ON COLUMN opiniones.id_opinion
+IS 'Identificador único de la opinión';
+COMMENT ON COLUMN opiniones.id_huesped
+IS 'Identificador del huésped que dejó la opinión';
+COMMENT ON COLUMN opiniones.comentario
+IS 'Comentario del huésped sobre su estancia (máximo 500 caracteres)';
+COMMENT ON COLUMN opiniones.puntuacion
+IS 'Puntuación otorgada por el huésped (valor entre 0 y 99)';
+COMMENT ON COLUMN opiniones.fecha
+IS 'Fecha en la que se dejó la opinión';
+
+COMMENT ON TABLE servicios
+IS 'Tabla que almacena información sobre los servicios ofrecidos por el establecimiento';
+COMMENT ON COLUMN servicios.id_servicio
+IS 'Identificador único del servicio';
+COMMENT ON COLUMN servicios.nombre_servicio
+IS 'Nombre del servicio ofrecido';
+COMMENT ON COLUMN servicios.descripcion
+IS 'Descripción detallada del servicio (máximo 500 caracteres)';
+COMMENT ON COLUMN servicios.precio
+IS 'Precio del servicio';
+
+COMMENT ON TABLE habitaciones
+IS 'Tabla que almacena información sobre las habitaciones disponibles en el establecimiento';
+COMMENT ON COLUMN habitaciones.id_habitacion
+IS 'Identificador único de la habitación';
+COMMENT ON COLUMN habitaciones.tipo
+IS 'Tipo de habitación';
+COMMENT ON COLUMN habitaciones.precio
+IS 'Precio de la habitación por noche';
+COMMENT ON COLUMN habitaciones.capacidad
+IS 'Capacidad máxima de personas que pueden alojarse en la habitación';
+
+COMMENT ON TABLE reservas
+IS 'Tabla que almacena información sobre las reservas de habitaciones realizadas por los huéspedes';
+COMMENT ON COLUMN reservas.id_reserva
+IS 'Identificador único de la reserva';
+COMMENT ON COLUMN reservas.id_habitacion
+IS 'Identificador de la habitación reservada';
+COMMENT ON COLUMN reservas.id_huesped
+IS 'Identificador del huésped que realizó la reserva';
+COMMENT ON COLUMN reservas.fecha_entrada
+IS 'Fecha de entrada para la reserva';
+COMMENT ON COLUMN reservas.fecha_salida
+IS 'Fecha de salida para la reserva';
+
+COMMENT ON TABLE pagos
+IS 'Tabla que almacena información sobre los pagos realizados por los huéspedes';
+COMMENT ON COLUMN pagos.id_pago
+IS 'Identificador único del pago';
+COMMENT ON COLUMN pagos.id_reserva
+IS 'Identificador de la reserva asociada al pago';
+COMMENT ON COLUMN pagos.monto
+IS 'Monto del pago';
+COMMENT ON COLUMN pagos.fecha
+IS 'Fecha en que se realizó el pago';
+COMMENT ON COLUMN pagos.metodo_pago
+IS 'Método de pago utilizado';
+
+COMMENT ON TABLE promociones
+IS 'Tabla que almacena información sobre las promociones disponibles en el establecimiento';
+COMMENT ON COLUMN promociones.id_promocion
+IS 'Identificador único de la promoción';
+COMMENT ON COLUMN promociones.descripcion
+IS 'Descripción de la promoción (máximo 500 caracteres)';
+COMMENT ON COLUMN promociones.descuento
+IS 'Descuento aplicado por la promoción (en porcentaje)';
+COMMENT ON COLUMN promociones.fecha_inicio
+IS 'Fecha de inicio de la promoción';
+COMMENT ON COLUMN promociones.fecha_fin
+IS 'Fecha de finalización de la promoción';
+
+COMMENT ON TABLE reservas_promociones
+IS 'Tabla que almacena las relaciones entre reservas y promociones';
+COMMENT ON COLUMN reservas_promociones.id_reserva
+IS 'Identificador de la reserva';
+COMMENT ON COLUMN reservas_promociones.id_promocion
+IS 'Identificador de la promoción';
+
+REM ----------------------------------------------------------------------------------------------------
+
+
+REM --------------------------------------- POPULACIÓN DE TABLAS ---------------------------------------
 
 INSERT INTO huespedes VALUES (1234567890, 'Juan Pérez', 'juanperez@hotmail.com', '3101234567');
 INSERT INTO huespedes VALUES (1234567891, 'María Gómez', 'mariagomez@gmail.com', '3157654321');
@@ -175,47 +318,27 @@ INSERT INTO huespedes VALUES (2234567896, 'Paula López', 'paulalopez@hotmail.co
 INSERT INTO huespedes VALUES (2234567897, 'Andrea Soto', 'andreasoto@outlook.com', '3109876453');
 INSERT INTO huespedes VALUES (2234567898, 'Sebastián Ríos', 'sebastianrios@yahoo.com', '3176543209');
 INSERT INTO huespedes VALUES (2234567899, 'Manuela Gómez', 'manuelagomez@gmail.com', '3187654390');
-INSERT INTO huespedes VALUES (3234567890, 'Alejandro Martínez', 'alejandromartinez@yahoo.com', '3109876543');
-INSERT INTO huespedes VALUES (3234567891, 'Fernanda Silva', 'fernandasilva@outlook.com', '3151234567');
-INSERT INTO huespedes VALUES (3234567892, 'Roberto Pérez', 'robertoperez@gmail.com', '3177654321');
-INSERT INTO huespedes VALUES (3234567893, 'Catalina Ramírez', 'catalinaramirez@hotmail.com', '3187654321');
-INSERT INTO huespedes VALUES (3234567894, 'José Rodríguez', 'joserodriguez@gmail.com', '3105678901');
-INSERT INTO huespedes VALUES (3234567895, 'Camilo López', 'camilolopez@yahoo.com', '3134567890');
-INSERT INTO huespedes VALUES (3234567896, 'Marina García', 'marinagarcia@outlook.com', '3123456789');
-INSERT INTO huespedes VALUES (3234567897, 'Andrea Rojas', 'andrearojas@yahoo.com', '3146543210');
-INSERT INTO huespedes VALUES (3234567898, 'Felipe González', 'felipegonzalez@gmail.com', '3157890123');
-INSERT INTO huespedes VALUES (3234567899, 'Lorena Martínez', 'lorenamartinez@hotmail.com', '3168901234');
-INSERT INTO huespedes VALUES (4234567890, 'Manuel Vargas', 'manuelvargas@gmail.com', '3179012345');
-INSERT INTO huespedes VALUES (4234567891, 'Sara Jiménez', 'sarajimenez@gmail.com', '3180123456');
-INSERT INTO huespedes VALUES (4234567892, 'Pablo Sánchez', 'pablosanchez@gmail.com', '3191234567');
-INSERT INTO huespedes VALUES (4234567893, 'Daniela Torres', 'danielatorres@gmail.com', '3202345678');
-INSERT INTO huespedes VALUES (4234567894, 'Gabriela Díaz', 'gabrieladiaz@gmail.com', '3213456789');
-INSERT INTO huespedes VALUES (4234567895, 'Javier Ruiz', 'javierruiz@gmail.com', '3224567890');
-INSERT INTO huespedes VALUES (4234567896, 'Valeria Gómez', 'valeriagomez@gmail.com', '3235678901');
-INSERT INTO huespedes VALUES (4234567897, 'Mario Castro', 'mariocastro@gmail.com', '3246789012');
-INSERT INTO huespedes VALUES (4234567898, 'Carolina López', 'carolinalopez@gmail.com', '3257890123');
-INSERT INTO huespedes VALUES (4234567899, 'Diego Hernández', 'diegohernandez@hotmail.com', '3268901234');
 
-INSERT INTO opiniones VALUES (1, 1234567890, 'Excelente servicio y atención.', 95, TO_DATE('2024-06-06', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (2, 2234567893, 'Muy buena experiencia.', 90, TO_DATE('2024-06-16', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (3, 4234567899, 'Habitaciones limpias y comodas.', 95, TO_DATE('2024-06-18', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (4, 4234567891, 'El personal fue muy amable y servicial.', 85, TO_DATE('2024-06-25', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (5, 2234567892, 'Las instalaciones estaban impecables.', 98, TO_DATE('2024-07-03', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (6, 2234567895, 'La comida del restaurante era deliciosa.', 92, TO_DATE('2024-07-10', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (7, 4234567895, 'Volvería sin dudarlo.', 94, TO_DATE('2024-07-15', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (8, 4234567898, 'Excelente ubicación y vistas increíbles.', 96, TO_DATE('2024-07-22', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (9, 3234567898, 'El spa era muy relajante.', 88, TO_DATE('2024-07-30', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (10, 2234567890, 'El desayuno era variado y delicioso.', 90, TO_DATE('2024-08-05', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (11, 1234567891, 'El personal de recepción fue muy atento.', 88, TO_DATE('2024-08-12', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (12, 4234567894, 'Las instalaciones estaban muy limpias y bien mantenidas.', 95, TO_DATE('2024-08-20', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (13, 3234567891, 'La conexión Wi-Fi era rápida y estable.', 92, TO_DATE('2024-08-25', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (14, 4234567897, 'Las camas eran muy cómodas.', 96, TO_DATE('2024-09-02', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (15, 1234567893, 'El servicio de limpieza era impecable.', 94, TO_DATE('2024-09-10', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (16, 1234567894, 'El servicio de habitaciones fue rápido y eficiente.', 93, TO_DATE('2024-09-15', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (17, 3234567890, 'El ambiente del hotel era muy tranquilo y relajante.', 94, TO_DATE('2024-10-10', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (18, 2234567894, 'El check-in fue rápido y sin complicaciones.', 88, TO_DATE('2024-09-25', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (19, 4234567896, 'La relación calidad-precio fue excelente.', 91, TO_DATE('2024-10-01', 'YYYY-MM-DD'));
-INSERT INTO opiniones VALUES (20, 2234567898, 'El gimnasio estaba bien equipado.', 89, TO_DATE('2024-10-05', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (  1, 1234567890, 'Excelente servicio y atención.', 95, TO_DATE('2024-06-06', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (2, 1234567891, 'Muy buena experiencia.', 90, TO_DATE('2024-06-16', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (3, 1234567892, 'Habitaciones limpias y comodas.', 95, TO_DATE('2024-06-18', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (4, 1234567893, 'El personal fue muy amable y servicial.', 85, TO_DATE('2024-06-25', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (5, 1234567894, 'Las instalaciones estaban impecables.', 98, TO_DATE('2024-07-03', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (6, 1234567895, 'La comida del restaurante era deliciosa.', 92, TO_DATE('2024-07-10', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (7, 1234567896, 'Volvería sin dudarlo.', 94, TO_DATE('2024-07-15', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (8, 1234567897, 'Excelente ubicación y vistas increíbles.', 96, TO_DATE('2024-07-22', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (9, 1234567898, 'El spa era muy relajante.', 88, TO_DATE('2024-07-30', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (10, 1234567899, 'El desayuno era variado y delicioso.', 90, TO_DATE('2024-08-05', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (11, 2234567890, 'El personal de recepción fue muy atento.', 88, TO_DATE('2024-08-12', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (12, 2234567891, 'Las instalaciones estaban muy limpias y bien mantenidas.', 95, TO_DATE('2024-08-20', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (13, 2234567892, 'La conexión Wi-Fi era rápida y estable.', 92, TO_DATE('2024-08-25', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (14, 2234567893, 'Las camas eran muy cómodas.', 96, TO_DATE('2024-09-02', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (15, 2234567894, 'El servicio de limpieza era impecable.', 94, TO_DATE('2024-09-10', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (16, 2234567895, 'El servicio de habitaciones fue rápido y eficiente.', 93, TO_DATE('2024-09-15', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (17, 2234567896, 'El ambiente del hotel era muy tranquilo y relajante.', 94, TO_DATE('2024-10-10', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (18, 2234567897, 'El check-in fue rápido y sin complicaciones.', 88, TO_DATE('2024-09-25', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (19, 2234567898, 'La relación calidad-precio fue excelente.', 91, TO_DATE('2024-10-01', 'YYYY-MM-DD'));
+INSERT INTO opiniones VALUES (20, 2234567899, 'El gimnasio estaba bien equipado.', 89, TO_DATE('2024-10-05', 'YYYY-MM-DD'));
 
 INSERT INTO servicios VALUES (1, 'Spa', 'Tratamiento relajante en el spa', 120000.00);
 INSERT INTO servicios VALUES (2, 'Desayuno Buffet', 'Desayuno buffet disponible de 7:00 a.m. a 10:00 a.m.', 30000.00);
@@ -265,17 +388,20 @@ INSERT INTO reservas VALUES (503, 1003, 1234567892, TO_DATE('2024-06-02', 'YYYY-
 INSERT INTO reservas VALUES (504, 1004, 1234567893, TO_DATE('2024-06-04', 'YYYY-MM-DD'), TO_DATE('2024-06-08', 'YYYY-MM-DD'));
 INSERT INTO reservas VALUES (505, 1005, 1234567894, TO_DATE('2024-06-01', 'YYYY-MM-DD'), TO_DATE('2024-06-10', 'YYYY-MM-DD'));
 INSERT INTO reservas VALUES (506, 2001, 1234567895, TO_DATE('2024-06-05', 'YYYY-MM-DD'), TO_DATE('2024-06-09', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (507, 2003, 1234567897, TO_DATE('2024-06-06', 'YYYY-MM-DD'), TO_DATE('2024-06-10', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (508, 2004, 1234567898, TO_DATE('2024-06-08', 'YYYY-MM-DD'), TO_DATE('2024-06-14', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (509, 2005, 1234567899, TO_DATE('2024-06-03', 'YYYY-MM-DD'), TO_DATE('2024-06-07', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (510, 3001, 2234567890, TO_DATE('2024-06-04', 'YYYY-MM-DD'), TO_DATE('2024-06-08', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (511, 3002, 2234567891, TO_DATE('2024-06-06', 'YYYY-MM-DD'), TO_DATE('2024-06-11', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (512, 3003, 2234567892, TO_DATE('2024-06-05', 'YYYY-MM-DD'), TO_DATE('2024-06-10', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (513, 3004, 2234567893, TO_DATE('2024-06-07', 'YYYY-MM-DD'), TO_DATE('2024-06-12', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (514, 4001, 2234567895, TO_DATE('2024-06-09', 'YYYY-MM-DD'), TO_DATE('2024-06-14', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (515, 4002, 2234567896, TO_DATE('2024-06-10', 'YYYY-MM-DD'), TO_DATE('2024-06-15', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (516, 4003, 2234567897, TO_DATE('2024-06-11', 'YYYY-MM-DD'), TO_DATE('2024-06-16', 'YYYY-MM-DD'));
-INSERT INTO reservas VALUES (517, 4004, 2234567898, TO_DATE('2024-06-12', 'YYYY-MM-DD'), TO_DATE('2024-06-17', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (507, 2002, 1234567896, TO_DATE('2024-06-06', 'YYYY-MM-DD'), TO_DATE('2024-06-10', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (508, 2003, 1234567897, TO_DATE('2024-06-08', 'YYYY-MM-DD'), TO_DATE('2024-06-14', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (509, 2004, 1234567898, TO_DATE('2024-06-03', 'YYYY-MM-DD'), TO_DATE('2024-06-07', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (510, 2005, 1234567899, TO_DATE('2024-06-04', 'YYYY-MM-DD'), TO_DATE('2024-06-08', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (511, 3001, 2234567890, TO_DATE('2024-06-06', 'YYYY-MM-DD'), TO_DATE('2024-06-11', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (512, 3002, 2234567891, TO_DATE('2024-06-05', 'YYYY-MM-DD'), TO_DATE('2024-06-10', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (513, 3003, 2234567892, TO_DATE('2024-06-07', 'YYYY-MM-DD'), TO_DATE('2024-06-12', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (514, 3004, 2234567893, TO_DATE('2024-06-09', 'YYYY-MM-DD'), TO_DATE('2024-06-14', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (515, 3005, 2234567894, TO_DATE('2024-06-10', 'YYYY-MM-DD'), TO_DATE('2024-06-15', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (516, 4001, 2234567895, TO_DATE('2024-06-11', 'YYYY-MM-DD'), TO_DATE('2024-06-16', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (517, 4002, 2234567896, TO_DATE('2024-06-12', 'YYYY-MM-DD'), TO_DATE('2024-06-17', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (518, 4003, 2234567897, TO_DATE('2024-06-10', 'YYYY-MM-DD'), TO_DATE('2024-06-13', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (519, 4004, 2234567898, TO_DATE('2024-06-11', 'YYYY-MM-DD'), TO_DATE('2024-06-16', 'YYYY-MM-DD'));
+INSERT INTO reservas VALUES (520, 4005, 2234567899, TO_DATE('2024-06-12', 'YYYY-MM-DD'), TO_DATE('2024-06-20', 'YYYY-MM-DD'));
 
 INSERT INTO pagos VALUES (1, 501, 100000, TO_DATE('2024-05-05', 'YYYY-MM-DD'), 'Tarjeta de Crédito');
 INSERT INTO pagos VALUES (2, 502, 350000, TO_DATE('2024-05-10', 'YYYY-MM-DD'), 'Transferencia Bancaria');
@@ -303,5 +429,6 @@ INSERT INTO promociones VALUES (5, 'Descuento del 20% para estancias durante la 
 INSERT INTO promociones VALUES (7, 'Oferta del Día del Padre: 15% de descuento', 15.00, TO_DATE('2024-06-16', 'YYYY-MM-DD'), TO_DATE('2024-06-16', 'YYYY-MM-DD'));
 INSERT INTO promociones VALUES (8, 'Descuento del 10% por estancia de más de 5 noches', 10.00, TO_DATE('2024-05-01', 'YYYY-MM-DD'), TO_DATE('2024-12-31', 'YYYY-MM-DD'));
 
+COMMIT;
 
 SPOOL OFF
